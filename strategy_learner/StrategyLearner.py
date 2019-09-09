@@ -1,0 +1,189 @@
+"""                                                               
+Template for implementing StrategyLearner  (c) 2016 Tucker Balch                                                                
+                                                                
+Copyright 2018, Georgia Institute of Technology (Georgia Tech)                                                                
+Atlanta, Georgia 30332                                                                
+All Rights Reserved                                                               
+                                                                
+Template code for CS 4646/7646                                                                
+                                                                
+Georgia Tech asserts copyright ownership of this template and all derivative                                                                
+works, including solutions to the projects assigned in this course. Students                                                                
+and other users of this template code are advised not to share it with others                                                               
+or to make it available on publicly viewable websites including repositories                                                                
+such as github and gitlab.  This copyright statement should not be removed                                                                
+or edited.                                                                
+                                                                
+We do grant permission to share solutions privately with non-students such                                                                
+as potential employers. However, sharing with other current or future                                                               
+students of CS 7646 is prohibited and subject to being investigated as a                                                                
+GT honor code violation.                                                                
+                                                                
+-----do not edit anything above this line---                                                                
+                                                                
+  Student Name: ZHENG FU
+  GT User ID: zfu66
+  GT ID: 903369876                                                                
+"""                                                               
+                                                                
+import datetime as dt                                                               
+import pandas as pd                                                               
+import util as ut                                                               
+import random  
+import RTLearner as rt
+import BagLearner as bl
+from indicators import *                                                             
+                                                                
+class StrategyLearner(object):                                                                
+                                                                
+    # constructor                                                               
+    def __init__(self, verbose = False, impact=0.0):                                                                
+        self.verbose = verbose                                                                
+        self.impact = impact 
+        self.learner = bl.BagLearner(learner = rt.RTLearner, kwargs = {"leaf_size":5}, bags = 20, boost = False, verbose = False)
+        self.RETURN = 40
+
+    # Author 
+    def author():
+        return 'zfu66' #Change this to your user ID   
+
+    def generateX_train(self, prices, syms):
+
+        sma_windows = 20
+        BB_width = 2
+        BB_results = BollingerBands(prices, syms, sma_windows, BB_width)
+        
+        sma20 = BB_results[0].fillna(method='bfill')
+        upper = BB_results[2].fillna(method='bfill')
+        lower = BB_results[3].fillna(method='bfill')
+        bba   = BB_results[4].fillna(method='bfill')
+
+        momentum = Momentum(prices, syms, sma_windows).fillna(method='bfill')  
+        sma50    = SMA(prices, syms, 50).fillna(method='bfill')
+
+        #print(bba.shape)
+
+        df = np.zeros((len(prices) - self.RETURN, 9))
+        
+        for i in range(0, len(prices) - self.RETURN):
+            df[i][0] = prices.iloc[i]
+            df[i][1] = prices.iloc[i] - upper.iloc[i]
+            df[i][2] = prices.iloc[i] - lower.iloc[i]
+            df[i][3] = momentum.iloc[i]
+            df[i][4] = sma20.iloc[i]
+            df[i][5] = sma50.iloc[i]
+            df[i][6] = sma50.iloc[i] - sma20.iloc[i]
+            df[i][7] = bba.iloc[i]
+            df[i][8] = prices.iloc[i + self.RETURN]
+            
+        return df     
+
+    def generateX_test(self, prices, syms):
+
+        sma_windows = 20
+        BB_width = 2
+        BB_results = BollingerBands(prices, syms, sma_windows, BB_width)
+        
+        sma20 = BB_results[0].fillna(method='bfill')
+        upper = BB_results[2].fillna(method='bfill')
+        lower = BB_results[3].fillna(method='bfill')
+        bba   = BB_results[4].fillna(method='bfill')
+
+        momentum = Momentum(prices, syms, sma_windows).fillna(method='bfill')  
+        sma50    = SMA(prices, syms, 50).fillna(method='bfill')
+
+        df = np.zeros((len(prices) - self.RETURN, 7))
+        
+        for i in range(0, len(prices) - self.RETURN):
+        
+            df[i][0] = prices.iloc[i] - upper.iloc[i]
+            df[i][1] = prices.iloc[i] - lower.iloc[i]
+            df[i][2] = momentum.iloc[i]
+            df[i][3] = sma20.iloc[i]
+            df[i][4] = sma50.iloc[i]
+            df[i][5] = sma50.iloc[i] - sma20.iloc[i]
+            df[i][6] = bba.iloc[i]
+            
+            
+        return df                                                       
+                                                                
+    # this method should create a QLearner, and train it for trading                                                                
+    def addEvidence(self, symbol = "IBM", \
+        sd=dt.datetime(2008,1,1), \
+        ed=dt.datetime(2009,1,1), \
+        sv = 10000):                                                                
+                                                                
+        # add your code to do learning here                                                               
+                                                                
+        # example usage of the old backward compatible util function                                                                
+        syms  = [symbol]                                                               
+        dates = pd.date_range(sd, ed)                                                               
+        prices = get_data(syms, dates, True)
+        prices = prices.drop(['SPY'], axis=1)
+        prices = prices.fillna(method='ffill')
+        prices = prices.fillna(method='bfill')
+        prices = prices / prices.ix[0,]                                                              
+        if self.verbose: print prices   
+
+        # Generate X_train Data
+        X = self.generateX_train(prices, syms)
+        X_train = X[:,1:-1]
+
+        Y = []
+        for i in range(0, X.shape[0]):
+            if (float(X[i,-1]) / float(X[i,0])) >= 1.025 + self.impact:
+                Y.append(1)
+            elif (float(X[i,-1]) / float(X[i,0])) <= 0.975 - self.impact:
+                Y.append(-1)
+            else:
+                Y.append(0)
+        Y_train = np.array(Y)
+
+        # Modeling
+        self.learner.addEvidence(X_train, Y_train)                                               
+                                                                
+    # this method should use the existing policy and test it against new data                                                               
+    def testPolicy(self, symbol = "IBM", \
+        sd=dt.datetime(2009,1,1), \
+        ed=dt.datetime(2010,1,1), \
+        sv = 10000):                                                                
+                                                                
+        # here we build a fake set of trades                                                                
+        # your code should return the same sort of data                                                               
+        syms  = [symbol]                                                               
+        dates = pd.date_range(sd, ed)                                                               
+        prices = get_data(syms, dates, True)
+        prices = prices.drop(['SPY'], axis=1)
+        prices = prices.fillna(method='ffill')
+        prices = prices.fillna(method='bfill')
+        prices = prices / prices.ix[0,]                                                              
+        if self.verbose: print prices 
+
+        X_test = self.generateX_test(prices, syms)
+        Y_test = self.learner.query(X_test)
+        trades = pd.DataFrame(0, columns=prices.columns, index=prices.index)
+
+        share = 0
+        for i in range(0, len(prices) - self.RETURN):
+
+            if Y_test[i] == 1:
+                if share == 0:
+                    share = 1000
+                    trades.iloc[i, 0] = 1000
+                elif share == - 1000:
+                    share = 1000
+                    trades.iloc[i, 0] = 2000
+
+            if Y_test[i] == -1:
+                if share == 0:
+                    share = -1000
+                    trades.iloc[i, 0] = -1000
+                elif share == 1000:
+                    share = -1000
+                    trades.iloc[i, 0] = -2000
+                                                                
+        return trades                                                               
+                                                                
+if __name__=="__main__":                                                                
+    print "One does not simply think up a strategy"  
+    
